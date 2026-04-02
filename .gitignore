@@ -1,0 +1,24 @@
+# Data files
+*.csv
+*.xls
+*.xlsx
+
+# Editors & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Data files (Sensitive question banks)
+data/
+
+# Logs
+*.log
+
+# Web Specifics
+node_modules/
+dist/
+build/
+.env
