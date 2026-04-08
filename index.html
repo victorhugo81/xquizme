@@ -96,8 +96,11 @@
             </div>
 
             <p class="format-hint">
-              <i class="fas fa-info-circle"></i>
-              Columns: Question, A, B, C, D, Correct Answer
+              <strong><i class="fas fa-info-circle"></i> File Header: </strong></p>
+              <p class="format-hint">Question | Option_1 | Option_2 | Option_3 | Option 4 | Correct_Answer
+            </p>
+            <p class="format-hint">
+             * If a question has multiple answers, separate the answers with a comma.
             </p>
           </div>
         </div>
@@ -137,6 +140,7 @@
       <!-- Question -->
       <div class="question-card">
         <h3 id="question" class="question-text"></h3>
+        <div id="multiSelectHint" class="multi-select-hint hidden"></div>
       </div>
 
       <!-- Answers -->
