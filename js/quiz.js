@@ -3,7 +3,7 @@ let questions = [];
 let quizQuestions = [];
 let current = 0;
 let score = 0;
-let selectedAnswer = null;
+let selectedAnswers = new Set();
 let userAnswers = [];
 let timerInterval;
 let timeLeft;
@@ -40,6 +40,12 @@ function shuffle(array) {
         [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
+}
+
+function setsEqual(a, b) {
+    if (a.size !== b.size) return false;
+    for (const v of a) if (!b.has(v)) return false;
+    return true;
 }
 
 function $(id) { return document.getElementById(id); }
@@ -110,11 +116,17 @@ function parseExcel(file) {
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-            const parsed = json.slice(1).map(row => ({
-                question: row[0],
-                options: shuffle([row[1], row[2], row[3], row[4]].filter(Boolean)),
-                answer: row[5]
-            })).filter(q => q.question && q.answer);
+            const parsed = json.slice(1).map(row => {
+                // Correct Answer column may be comma-separated for multi-answer questions
+                const rawAnswer = String(row[5] ?? '');
+                const answers = rawAnswer.split(',').map(s => s.trim()).filter(Boolean);
+                return {
+                    question: row[0],
+                    options: shuffle([row[1], row[2], row[3], row[4]].filter(Boolean)),
+                    answers,                        // always an array
+                    isMulti: answers.length > 1,
+                };
+            }).filter(q => q.question && q.answers.length > 0);
 
             resolve(parsed);
         };
@@ -180,12 +192,21 @@ function updateTimerDisplay() {
 /* ─── Question Loading ───────────────────────────────────────────── */
 function loadQuestion() {
     const q = quizQuestions[current];
-    selectedAnswer = null;
+    selectedAnswers = new Set();
     answered = false;
 
     $('questionCounter').textContent = `Question ${current + 1} of ${quizQuestions.length}`;
     $('question').textContent = q.question;
     $('feedback').innerHTML = '';
+
+    // Multi-select hint
+    const hintEl = $('multiSelectHint');
+    if (q.isMulti) {
+        hintEl.textContent = `Select all that apply (${q.answers.length} correct answers)`;
+        hintEl.classList.remove('hidden');
+    } else {
+        hintEl.classList.add('hidden');
+    }
 
     renderAnswers(q.options);
     updateProgress();
@@ -219,9 +240,22 @@ function renderAnswers(options) {
 function selectAnswer(el, value) {
     if (answered) return;
 
-    document.querySelectorAll('.answer-option').forEach(opt => opt.classList.remove('selected'));
-    el.classList.add('selected');
-    selectedAnswer = value;
+    const q = quizQuestions[current];
+
+    if (q.isMulti) {
+        // Toggle selection
+        if (selectedAnswers.has(value)) {
+            selectedAnswers.delete(value);
+            el.classList.remove('selected');
+        } else {
+            selectedAnswers.add(value);
+            el.classList.add('selected');
+        }
+    } else {
+        document.querySelectorAll('.answer-option').forEach(opt => opt.classList.remove('selected'));
+        el.classList.add('selected');
+        selectedAnswers = new Set([value]);
+    }
 }
 
 /* ─── Progress ───────────────────────────────────────────────────── */
@@ -262,24 +296,25 @@ function handleAction() {
 
 /* ─── Check Answer ───────────────────────────────────────────────── */
 function checkAnswer() {
-    if (!selectedAnswer) {
+    if (selectedAnswers.size === 0) {
         showAlert('Please select an answer before continuing.');
         return;
     }
 
-    const correct = quizQuestions[current].answer;
-    userAnswers[current] = selectedAnswer;
+    const q = quizQuestions[current];
+    const correctSet = new Set(q.answers);
+    userAnswers[current] = [...selectedAnswers];
     answered = true;
 
-    const isCorrect = selectedAnswer === correct;
+    const isCorrect = setsEqual(selectedAnswers, correctSet);
     if (isCorrect) score++;
 
     // Style answer options
     document.querySelectorAll('.answer-option').forEach(opt => {
         opt.classList.add('disabled');
         const val = opt.dataset.value;
-        if (val === correct)              opt.classList.add('correct');
-        else if (val === selectedAnswer)  opt.classList.add('incorrect');
+        if (correctSet.has(val))          opt.classList.add('correct');
+        else if (selectedAnswers.has(val)) opt.classList.add('incorrect');
     });
 
     // Show feedback
@@ -290,10 +325,11 @@ function checkAnswer() {
                 <i class="fas fa-check-circle"></i> Correct! Well done.
             </div>`;
     } else {
+        const correctList = q.answers.map(a => escapeHtml(a)).join(', ');
         feedbackDiv.innerHTML = `
             <div class="feedback-box incorrect-feedback">
                 <i class="fas fa-times-circle"></i>
-                Incorrect. The correct answer is: <strong>${escapeHtml(correct)}</strong>
+                Incorrect. The correct answer${q.isMulti ? 's are' : ' is'}: <strong>${correctList}</strong>
             </div>`;
     }
 
@@ -321,22 +357,26 @@ function finishQuiz() {
     // Build review HTML
     let reviewHTML = '';
     quizQuestions.forEach((q, i) => {
-        const user      = userAnswers[i];
-        const correct   = q.answer;
-        const isCorrect = user === correct;
+        const userSel   = userAnswers[i] || [];
+        const correctSet = new Set(q.answers);
+        const isCorrect = setsEqual(new Set(userSel), correctSet);
         const cls       = isCorrect ? 'review-correct' : 'review-incorrect';
+
+        const userLabel  = userSel.length ? userSel.map(a => escapeHtml(a)).join(', ') : 'No answer';
+        const correctLabel = q.answers.map(a => escapeHtml(a)).join(', ');
 
         reviewHTML += `
             <div class="review-item ${cls}">
                 <div class="review-question">
                     <i class="fas fa-${isCorrect ? 'check-circle text-success' : 'times-circle text-danger'}"></i>
                     Q${i + 1}: ${escapeHtml(q.question)}
+                    ${q.isMulti ? '<span class="multi-badge">Multi-answer</span>' : ''}
                 </div>
                 <div class="review-answers">
                     <span class="review-pill ${isCorrect ? 'your-correct' : 'your-incorrect'}">
-                        <i class="fas fa-user"></i> ${escapeHtml(user || 'No answer')}
+                        <i class="fas fa-user"></i> ${userLabel}
                     </span>
-                    ${!isCorrect ? `<span class="review-pill correct-answer"><i class="fas fa-check"></i> ${escapeHtml(correct)}</span>` : ''}
+                    ${!isCorrect ? `<span class="review-pill correct-answer"><i class="fas fa-check"></i> ${correctLabel}</span>` : ''}
                 </div>
             </div>`;
     });
@@ -371,7 +411,6 @@ function resetQuiz() {
 
 /* ─── Utility ────────────────────────────────────────────────────── */
 function showAlert(msg) {
-    // Replace native alert with a temporary inline message if possible
     const existing = document.querySelector('.quiz-alert');
     if (existing) existing.remove();
 
@@ -379,7 +418,6 @@ function showAlert(msg) {
     el.className = 'quiz-alert feedback-box incorrect-feedback mb-3';
     el.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${msg}`;
 
-    // Insert before the start button or action button
     const btn = $('actionBtn') || document.querySelector('.btn-start');
     if (btn) btn.parentElement.insertBefore(el, btn);
 
@@ -388,3 +426,4 @@ function showAlert(msg) {
 
 /* ─── Init ───────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', initUploadZone);
+
